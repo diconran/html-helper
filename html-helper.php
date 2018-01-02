@@ -74,7 +74,7 @@ class HtmlHelper
 
             foreach($attr as $p => $v)
             {
-                $v = esc_attr($v);
+                $v = self::escAttr($v);
                 $str .= " {$p}=\"{$v}\"";
             } 
         }
@@ -208,7 +208,7 @@ class HtmlHelper
         $value = $this->getString($name);
         $addAttr = array();
         $callback = isset($callback) ? $callback : function($item, $tag){
-            $text = HtmlHelper::escHtml($item->text);
+            $text = self::escHtml($item->text);
             return "{$tag} {$text} <br />";
         };
 
@@ -241,12 +241,12 @@ class HtmlHelper
 
     public static function escHtml($text)
     {
-        return esc_html($text);
+        return htmlspecialchars($text, ENT_NOQUOTES);
     }
 
     public static function escAttr($text)
     {
-        return esc_attr($text);
+        return htmlspecialchars($text);
     }
 
 
