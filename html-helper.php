@@ -1,5 +1,8 @@
 <?php
 
+/**
+ * @copyright @diconran
+ */
 
 class HtmlHelper
 {
@@ -256,13 +259,14 @@ class SelectListItem
     public $value;
     public $text;
 
-    function __construct($selected = false, $value = '', $text = '')
+    function __construct($value = '', $text = '', $selected = false)
     {
         $this->selected = $selected;
         $this->value = $value;
         $this->text = isset($text) ? $text : $value;
     }
 }
+
 
 
 /**
@@ -373,15 +377,5 @@ final class ListGetter implements IPropertyGetter
     }
 
 }
-
-
-
-
-?>
-
-
-
-
-
 
 
