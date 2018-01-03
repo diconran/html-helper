@@ -7,6 +7,7 @@
 class HtmlHelper
 {
     private $model;
+    private $modelHelper;
 
     public function getModel()
     {
@@ -20,66 +21,10 @@ class HtmlHelper
             $model = new stdClass;
         }
 
-        $this->model = &$model;
+        $this->model = $model;
+        $this->modelHelper = new ModelHelper($model);
     }
 
-    private function getString($name)
-    {
-        if( $this->hasValue($name) )
-        {
-            return (string)$this->getValue($name);
-        }
-        return '';
-    }
-
-    private function getArray($name)
-    {
-        if( $this->hasValue($name) )
-        {
-            $value = $this->getValue($name);
-
-            if( is_array($value) )
-            {
-                return $value;
-            }
-            return [$value];
-        }
-        return [];
-    }
-
-    private function hasValue($name)
-    {
-        return isset($this->model->$name);
-    }
-
-    private function getValue($name)
-    {
-        return $this->model->$name;
-    }
-
-
-    private static function toAttrString($name, $attr, $addAttr = array())
-    {
-        $str = '';
-
-        if(is_array($attr))
-        {
-
-            if(is_array($addAttr))
-            {
-                $attr = array_merge($attr, $addAttr);
-            }
-
-            self::setName( $name, $attr );
-
-            foreach($attr as $p => $v)
-            {
-                $v = self::escAttr($v);
-                $str .= " {$p}=\"{$v}\"";
-            } 
-        }
-        return $str;
-    }
 
     private static function setName( $name, &$attr )
     {
@@ -90,35 +35,38 @@ class HtmlHelper
 
     public function checkBox($name, $checked = null, $attr = array())
     {
-        $addAttr = $checked ? array('checked' => 'checked') : null;
+        if( !is_bool($checked) )
+        {
+            $checked = $this->modelHelper->hasValue($name);
+        }
+
+        $addAttr = array();
+
+        // nameが配列である場合を想定する
+        if( $checked )
+        {
+            $addAttr['checked'] = 'checked';
+            $addAttr['value'] = 'on';
+        }
+
         $attributes = self::toAttrString($name, $attr, $addAttr);
 
         return "<input type=\"checkbox\" {$attributes}/>";
     }
 
-    public function checkBoxFor($name, $attr = array())
-    {
-        $checked = $this->getString($name);
-        return $this->checkBox($name, $checked, $attr);
-    }
 
-    public function edit($name, $text, $attr = array())
+    public function edit($name, $attr = array())
     {
+        $text = $this->modelHelper->toString($name);
         $addAttr = array('value' => $text);
         $attributes = self::toAttrString($name, $attr, $addAttr);
 
         return "<input type=\"text\" {$attributes} />";
     }
 
-    public function editFor($name, $attr = array())
+    private function selectItem($name, $list, $callback)
     {
-        $text = $this->getString($name);
-        return $this->edit($name, $text, $attr);
-    }
-
-    private function selectItemFor($name, $list, $callback)
-    {
-        $values = $this->getArray($name);
+        $values = $this->modelHelper->toArray($name);
         $tag = '';
         foreach($list as $item)
         {
@@ -131,16 +79,16 @@ class HtmlHelper
     /**
      * @param IEnumerable<SelectListItem> $list
      */
-    public function selectFor($name, $list, $label = null, $isMulti = false, $attr = array())
+    public function select($name, $list, $label = null, $isMulti = false, $attr = array())
     {
-        $val = $this->getValue($name);
+        $val = $this->modelHelper->getValue($name);
         $addAttr = array();
         $labelTag = '';
 
         if( $isMulti || is_array($val) )
         {
             $addAttr = array(
-                'name' => "{$name}[]",
+                'name' => self::arrayName($name),
                 'id' => $name,
                 'multiple' => 'multiple'
             );
@@ -161,7 +109,7 @@ class HtmlHelper
         
         $tag .= $labelTag;
 
-        $tag .= $this->selectItemFor(
+        $tag .= $this->selectItem(
             $name,
             $list,
             function($item){
@@ -176,9 +124,9 @@ class HtmlHelper
     }
 
 
-    public function radioButtonFor($name, $value, $attr = array())
+    public function radioButton($name, $value, $attr = array())
     {
-        $val = $this->getString($name);
+        $val = $this->modelHelper->toString($name);
         $addAttr = array();
 
         if( $val )
@@ -203,25 +151,56 @@ class HtmlHelper
      * @param IEnumerable<SelectListItem> $list
      * @param Func<SelectListItem,string,string> $callback
      */
-    public function radioButtonListFor($name, $list, $callback = null, $attr = array())
+    public function radioButtonList($name, $list, $callback = null, $attr = array())
     {
-        $value = $this->getString($name);
         $addAttr = array();
         $callback = isset($callback) ? $callback : function($item, $tag){
             $text = self::escHtml($item->text);
-            return "{$tag} {$text} <br />";
+            return "<div class=\"radio-button-list-for\"><label>{$tag} {$text} </label></div>";
         };
 
         $attributes = self::toAttrString($name, $attr, $addAttr);
 
         $tag = '';
 
-        $tag .= $this->selectItemFor(
+        $tag .= $this->selectItem(
             $name,
             $list,
             function($item) use($name, $callback)
             {
-                $rTag = $this->radioButtonFor($name, $item->value);
+                $rTag = $this->radioButton($name, $item->value);
+                if( isset($callback) ) $rTag = $callback($item, $rTag);
+                return $rTag;
+            }
+        );
+
+        return $tag;
+
+
+    }
+
+    public function checkBoxList($name, $list, $callback = null, $attr = array())
+    {
+        $addAttr = array();
+
+        $callback = isset($callback) ? $callback : function($item, $tag){
+            $text = self::escHtml($item->text);
+            return "<div class=\"check-box-list-for\"><label>{$tag} {$text}</label></div>";
+        };
+
+        $attributes = self::toAttrString($name, $attr, $addAttr);
+
+        $tag = '';
+
+        $tag .= $this->selectItem(
+            $name,
+            $list,
+            function($item) use($name, $callback)
+            {
+                $attr = array();
+                $attr['name'] = self::arrayName($name);
+                $attr['value'] = $item->value;
+                $rTag = $this->checkBox($name, $item->selected, $attr);
                 if( isset($callback) ) $rTag = $callback($item, $rTag);
                 return $rTag;
             }
@@ -249,7 +228,42 @@ class HtmlHelper
         return htmlspecialchars($text);
     }
 
+    public static function arrayName($name)
+    {
+        return "{$name}[]";
+    }
 
+    public static function inArray($value, $array)
+    {
+        //
+        // バグ対応する
+        //
+        return is_array($array) && in_array($value, $array);
+    }
+
+
+    private static function toAttrString($name, $attr, $addAttr = array())
+    {
+        $str = '';
+
+        if(is_array($attr))
+        {
+
+            if(is_array($addAttr))
+            {
+                $attr = array_merge($addAttr, $attr);
+            }
+
+            self::setName( $name, $attr );
+
+            foreach($attr as $p => $v)
+            {
+                $v = self::escAttr($v);
+                $str .= " {$p}=\"{$v}\"";
+            } 
+        }
+        return $str;
+    }
 
 }
 
@@ -378,4 +392,73 @@ final class ListGetter implements IPropertyGetter
 
 }
 
+class ModelHelper
+{
+
+    private $model;
+
+    function __construct($model)
+    {
+        if( !is_object($model) ) throw new Exception('$model is not object');
+        $this->model = $model;
+    }
+
+    public function isString($name)
+    {
+        return is_string($this->getValue($name));
+    }
+
+    public function isArray($name)
+    {
+        return is_array($this->getValue($name));
+    }
+
+    public function isBool($name)
+    {
+        return is_bool($this->getValue($name));
+    }
+
+    
+    public static function strBool($bool)
+    {
+        return $bool ? 'on' : '';
+    }
+
+
+    public function toArray($name)
+    {
+        if( $this->hasValue($name) )
+        {
+            $value = $this->getValue($name);
+
+            if( is_array($value) )
+            {
+                return $value;
+            }
+            return [$value];
+        }
+        return [];
+    }
+
+    public function toString($name)
+    {
+        if( $this->hasValue($name) )
+        {
+            $value = $this->getValue($name);
+            if( is_string($value) ) return $value;
+        }
+        return null;
+    }
+
+    public function hasValue($name)
+    {
+        return isset($this->model->$name);
+    }
+
+    public function getValue($name)
+    {
+        return $this->model->$name;
+    }
+
+}
 
