@@ -18,7 +18,7 @@ class HtmlHelper
     {
         return $this->modelHelper;
     }
-    
+
 
     function __construct($model = null)
     {
@@ -70,6 +70,10 @@ class HtmlHelper
         return "<input type=\"text\" {$attributes} />";
     }
 
+
+    /**
+     * 
+     */
     private function selectItem($name, $list, $callback)
     {
         $values = $this->modelHelper->toArray($name);
@@ -91,6 +95,11 @@ class HtmlHelper
         $addAttr = array();
         $labelTag = '';
 
+        /**
+         * 
+         * バグ：is_array($val)は、要素が0の時は配列で取得出来ない。
+         * 
+         */
         if( $isMulti || is_array($val) )
         {
             $addAttr = array(
@@ -153,7 +162,7 @@ class HtmlHelper
 
 
     /**
-     * 
+     * @param string $name 値は文字列である必要があります。
      * @param IEnumerable<SelectListItem> $list
      * @param Func<SelectListItem,string,string> $callback
      */
@@ -294,7 +303,7 @@ class SelectListItem
 
 
 /**
- * $_POSTの値をオブジェクトのプロパティのように振る舞います。
+ * $_POSTの要素名をオブジェクトのプロパティのように振る舞います。
  * POSTが配列で送られて来た場合は優先的に配列型になります。
  */
 class PostObject
@@ -323,9 +332,7 @@ class PostObject
 
     private function getGettersValue($name)
     {
-        if( !isset($_POST[$name]) ) return null;
-
-        // 配列として値を取得
+        
         foreach( $this->getters as $getter )
         {
             if( $getter->hasValue($name) )
@@ -334,11 +341,14 @@ class PostObject
             }
         }
 
-        return $_POST[$name];
+        return self::getPost($name);
     }
 
     function __get($name)
     {
+        /**
+         * getterからPostObject#__get()が呼び出されないように対策する必要あり。
+         */
         return $this->getGettersValue($name);
     }
 
@@ -347,6 +357,15 @@ class PostObject
         return isset($_POST[$name]);
     }
     
+    public static function getPost($name)
+    {
+        return self::hasPost($name) ? $_POST[$name] : null;
+    }
+
+    public static function hasPost($name)
+    {
+        return isset($_POST[$name]);
+    }
 }
 
 interface IPropertyGetter
@@ -359,12 +378,12 @@ final class NameGetter implements IPropertyGetter
 {
     public function hasValue($name)
     {
-        return is_array( $_POST[$name] );
+        return is_array( PostObject::getPost($name) );
     }
 
     public function getValue($name)
     {
-        return $_POST[$name];
+        return PostObject::getPost($name);
     }
 
 }
@@ -390,27 +409,31 @@ final class ListGetter implements IPropertyGetter
 
     public function getValue($name)
     {
-        $value = $_POST[$name];
-
-        if( is_array($value) )
-        {
-            return $value;
-        }
-
-        return [$value];
+        $value = PostObject::hasPost($name) ? PostObject::getPost($name) : null;
+        return TypeConverter::getCurrent()->convertArray($value);
     }
 
 }
 
+
+/**
+ * オブジェクト(PostObject含む)をラップします。
+ * モデルへのアクセスを安全に行います。
+ */
 class ModelHelper
 {
 
     private $model;
+    private $typeConverter;
 
-    function __construct($model)
+    function __construct($model, $typeConverter = null)
     {
         if( !is_object($model) ) throw new Exception('$model is not object');
         $this->model = $model;
+        if(!($typeConverter instanceof TypeConverter))
+        {
+            $this->typeConverter = new TypeConverter();
+        }
     }
 
     public function isString($name)
@@ -429,46 +452,224 @@ class ModelHelper
     }
 
     
-    public static function strBool($bool)
+
+    /**
+     * TypeConverterにより配列に変換して取得します。
+     * 必ず0以上の配列で取得出来るようにする必要があります。
+     */
+    final public function toArray($name)
     {
-        return $bool ? 'on' : '';
+        $value = $this->hasValue($name) ? $this->getValue($name) : null;
+        return $this->typeConverter->convertArray($value);
     }
 
-
-    public function toArray($name)
+    /**
+     * TypeConverterにより文字列に変換して取得します。
+     * TypeConverterの変換リストに無い型はnullを返します。
+     */
+    final public function toString($name)
     {
-        if( $this->hasValue($name) )
-        {
-            $value = $this->getValue($name);
-
-            if( is_array($value) )
-            {
-                return $value;
-            }
-            return [$value];
-        }
-        return [];
+        $value = $this->hasValue($name) ? $this->getValue($name) : null;
+        return $this->typeConverter->convertString($value);
     }
 
-    public function toString($name)
-    {
-        if( $this->hasValue($name) )
-        {
-            $value = $this->getValue($name);
-            if( is_string($value) ) return $value;
-        }
-        return null;
-    }
-
+    /**
+     * Modelのプロパティ値を取得できるか調べます。
+     */
     public function hasValue($name)
     {
         return isset($this->model->$name);
     }
 
+    /**
+     * モデルの生のデータを取得します。
+     * プロパティが無い場合の動作は保証されません。
+     */
     public function getValue($name)
     {
         return $this->model->$name;
     }
 
 }
+
+
+
+
+
+/**
+ * HtmlHelperでは簡素化のため、文字列、文字列の配列、nullのいづれかの値を取るようになってます。
+ * TypeConverterはそれら以外の型を変換するためのデフォルトの機能です。
+ * ModelHelperによって使用されます。
+ */
+class TypeConverter
+{
+
+    private static $current;
+    private $converters = [];
+
+    public function &getConverters()
+    {
+        return $this->converters;
+    }
+
+    public static function getCurrent()
+    {
+        if( !isset(self::$current) )
+        {
+            self::$current = new TypeConverter();
+        }
+        return self::$current;
+    }
+
+    public function __construct()
+    {
+        $this->initConverters();
+    }
+
+    /**
+     * コンバーターの初期化設定。
+     * StringTypeConverter, BoolTypeConverter, NumericTypeConverter, DefaultTypeConverterの順で追加されます。
+     */
+    protected function initConverters()
+    {
+        $this->converters[] = new StringTypeConverter();
+        $this->converters[] = new BoolTypeConverter();
+        $this->converters[] = new NumericTypeConverter();
+        $this->converters[] = new DefaultTypeConverter();
+    }
+
+    /**
+     * 必ず配列で返します。
+     * nullは返しません。空の配列を返します。
+     */
+    public function convertArray($value)
+    {
+        if( is_array($value) )
+        {
+            return $this->cnvElements( $value );
+        }
+
+        if( !isset($value) )
+        {
+            return [];
+        }
+
+        return [$this->typeToString($value)];
+    }
+
+    private function cnvElements( $arr )
+    {
+        $r = [];
+
+        foreach($arr as $key => $value)
+        {
+            $c = $this->typeToString($value);
+            if( is_int($key) && isset($c) )
+            {
+                $r[] = $c;
+            }
+        }
+
+        return $r;
+    }
+
+    public function convertString($value)
+    {
+        return $this->typeToString($value);
+    }
+
+
+    private function typeToString($value)
+    {
+        return self::convert($this->converters, $value);
+    }
+
+    /**
+     * 文字列に変換します。変換できない場合はnullを返します。
+     */
+    public static function convert($converters, $value)
+    {
+        foreach($converters as $converter)
+        {
+            if( $converter->canConvert($value) )
+            {
+                return $converter->convert($value);
+            }
+        }
+
+        // 例外を返すか悩むところ。
+        return null;
+    }
+
+}
+
+interface ITypeConverter
+{
+    /**
+     * @return bool
+     */
+    public function canConvert($value);
+
+    /**
+     * @return string
+     */
+    public function convert($value);
+}
+
+final class BoolTypeConverter implements ITypeConverter
+{
+    public function canConvert($value)
+    {
+        return is_bool($value);
+    }
+
+    public function convert($value)
+    {
+        return $value ? 'on' : '';
+    }
+}
+
+final class NumericTypeConverter implements ITypeConverter
+{
+    public function canConvert($value)
+    {
+        return is_numeric($value);
+    }
+
+    public function convert($value)
+    {
+        return (string)$value;
+    }
+
+}
+
+final class StringTypeConverter implements ITypeConverter
+{
+    public function canConvert($value)
+    {
+        return is_string($value);
+    }
+
+    public function convert($value)
+    {
+        return (string)$value;
+    }
+
+}
+
+final class DefaultTypeConverter implements ITypeConverter
+{
+    public function canConvert($value)
+    {
+        return true;
+    }
+
+    public function convert($value)
+    {
+        return null;
+    }
+}
+
+
+
 

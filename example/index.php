@@ -65,6 +65,7 @@ function put($name)
     }
     else
     {
+        $val = $html->getModelHelper()->toString($name);
         $r = HtmlHelper::escHtml($val);
     }
     echo "<div class=\"put-style\">{$name} : {$r}</div>";
